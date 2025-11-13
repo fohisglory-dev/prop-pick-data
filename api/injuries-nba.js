@@ -1,22 +1,35 @@
+// api/injuries-nba.js
 const axios = require("axios");
 
 module.exports = async (req, res) => {
   try {
-    const url = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/injuries";
+    const url =
+      "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/injuries";
+
     const { data } = await axios.get(url, { timeout: 8000 });
 
     const injuries = [];
 
-    for (const team of data.injuries) {
-      for (const player of team.injuries) {
+    // ESPN feed uses `data.injuries` (array of teams)
+    for (const team of data.injuries || []) {
+      const teamAbbr = team.team?.abbreviation || null;
+      const teamName = team.team?.displayName || null;
+
+      for (const player of team.injuries || []) {
+        const ath = player.athlete || {};
+
         injuries.push({
-          team: team.team.abbreviation,
-          teamName: team.team.displayName,
-          player: player.athlete.displayName,
-          position: player.athlete.position?.abbreviation || null,
+          team: teamAbbr,
+          teamName,
+
+          player: ath.displayName || null,
+
+          // SAFE optional chaining everywhere
+          position: ath.position?.abbreviation || null,
+
           injury: player.injury?.description || null,
           status: player.injury?.status || null,
-          date: player.injury?.date || null,
+          date: player.injury?.date || null
         });
       }
     }
@@ -29,6 +42,9 @@ module.exports = async (req, res) => {
     });
 
   } catch (err) {
-    res.status(500).json({ error: "NBA API failed", detail: String(err) });
+    res.status(500).json({
+      error: "NBA API failed",
+      detail: String(err)
+    });
   }
 };
