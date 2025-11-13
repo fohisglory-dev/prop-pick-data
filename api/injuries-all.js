@@ -1,55 +1,66 @@
-// api/injuries-all.js
-// Combined NBA + NFL injuries via CBS scraper
+const axios = require("axios");
 
-const { scrapeLeague } = require("./_scrapeCBS");
+async function fetchNBA() {
+  const url = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/injuries";
+  const { data } = await axios.get(url);
+
+  const out = [];
+  for (const team of data.injuries) {
+    for (const p of team.injuries) {
+      out.push({
+        league: "nba",
+        team: team.team.abbreviation,
+        teamName: team.team.displayName,
+        player: p.athlete.displayName,
+        position: p.athlete.position?.abbreviation || null,
+        injury: p.injury?.description || null,
+        status: p.injury?.status || null,
+        date: p.injury?.date || null,
+      });
+    }
+  }
+  return out;
+}
+
+async function fetchNFL() {
+  const url = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/injuries";
+  const { data } = await axios.get(url);
+
+  const out = [];
+  for (const team of data.injuries) {
+    for (const p of team.injuries) {
+      out.push({
+        league: "nfl",
+        team: team.team.abbreviation,
+        teamName: team.team.displayName,
+        player: p.athlete.displayName,
+        position: p.athlete.position?.abbreviation || null,
+        injury: p.injury?.description || null,
+        status: p.injury?.status || null,
+        date: p.injury?.date || null,
+      });
+    }
+  }
+  return out;
+}
 
 module.exports = async (req, res) => {
   try {
-    const leaguesParam = req.query.leagues || "nba,nfl";
-
-    const leagues = leaguesParam
-      .split(",")
-      .map((l) => l.trim().toLowerCase())
-      .filter((l) => ["nba", "nfl"].includes(l));
-
-    if (leagues.length === 0) {
-      return res.status(400).json({
-        error: "Invalid 'leagues' param. Use nba,nfl or a single league.",
-      });
-    }
-
-    // Run both scrapers in parallel
-    const results = await Promise.all(
-      leagues.map((lg) => scrapeLeague(lg))
-    );
-
-    const injuries = [];
-    const byLeague = {};
-    let totalCount = 0;
-
-    leagues.forEach((lg, index) => {
-      const list = results[index] || [];
-      byLeague[lg] = {
-        league: lg,
-        count: list.length,
-        injuries: list,
-      };
-      injuries.push(...list.map((p) => ({ league: lg, ...p })));
-      totalCount += list.length;
-    });
+    const nba = await fetchNBA();
+    const nfl = await fetchNFL();
+    const all = [...nba, ...nfl];
 
     res.status(200).json({
-      leagues,
       updatedAt: new Date().toISOString(),
-      source: "CBS Sports (scraped)",
-      totalCount,
-      byLeague,
-      injuries,
+      total: all.length,
+      byLeague: {
+        nba: { count: nba.length, injuries: nba },
+        nfl: { count: nfl.length, injuries: nfl }
+      },
+      injuries: all
     });
+
   } catch (err) {
-    res.status(500).json({
-      error: "Server error while scraping combined injuries",
-      detail: String(err),
-    });
+    res.status(500).json({ error: "Combined API error", detail: String(err) });
   }
 };
