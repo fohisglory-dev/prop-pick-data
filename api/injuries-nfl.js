@@ -2,7 +2,7 @@ const axios = require("axios");
 
 module.exports = async (req, res) => {
   try {
-    const url = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/injuries";
+    const url = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/injuries";
     const { data } = await axios.get(url, { timeout: 8000 });
 
     const injuries = [];
@@ -22,13 +22,13 @@ module.exports = async (req, res) => {
     }
 
     res.status(200).json({
-      league: "nba",
+      league: "nfl",
       updatedAt: new Date().toISOString(),
       count: injuries.length,
       injuries
     });
 
   } catch (err) {
-    res.status(500).json({ error: "NBA API failed", detail: String(err) });
+    res.status(500).json({ error: "NFL API failed", detail: String(err) });
   }
 };
