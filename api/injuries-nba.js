@@ -4,33 +4,32 @@ const axios = require("axios");
 module.exports = async (req, res) => {
   try {
     const url =
-      "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/injuries";
+      "https://sports.core.api.espn.com/v2/sports/basketball/nba/athletes?injury=true";
 
     const { data } = await axios.get(url, { timeout: 8000 });
 
+    const injuredList = data.items || [];
     const injuries = [];
 
-    // ESPN feed uses `data.injuries` (array of teams)
-    for (const team of data.injuries || []) {
-      const teamAbbr = team.team?.abbreviation || null;
-      const teamName = team.team?.displayName || null;
-
-      for (const player of team.injuries || []) {
-        const ath = player.athlete || {};
+    // ESPN links each injured player via /athletes/{id}
+    for (const item of injuredList) {
+      try {
+        const { data: athlete } = await axios.get(item.$ref, { timeout: 8000 });
 
         injuries.push({
-          team: teamAbbr,
-          teamName,
+          player: athlete?.fullName || athlete?.displayName || null,
 
-          player: ath.displayName || null,
+          team: athlete?.team?.abbreviation || null,
+          teamName: athlete?.team?.displayName || null,
 
-          // SAFE optional chaining everywhere
-          position: ath.position?.abbreviation || null,
+          position: athlete?.position?.abbreviation || null,
 
-          injury: player.injury?.description || null,
-          status: player.injury?.status || null,
-          date: player.injury?.date || null
+          injury: athlete?.injuries?.[0]?.detail || null,
+          status: athlete?.injuries?.[0]?.status || null,
+          date: athlete?.injuries?.[0]?.date || null
         });
+      } catch (err) {
+        console.warn("Error parsing athlete:", err.message);
       }
     }
 
