@@ -1,35 +1,36 @@
-// api/injuries-nba.js
 const axios = require("axios");
+
+const TEAMS = [
+  "atl","bos","bkn","cha","chi","cle","dal","den","det","gsw",
+  "hou","ind","lac","lal","mem","mia","mil","min","nop","nyk",
+  "okc","orl","phi","phx","por","sac","sas","tor","uta","was"
+];
 
 module.exports = async (req, res) => {
   try {
-    const url =
-      "https://sports.core.api.espn.com/v2/sports/basketball/nba/athletes?injury=true";
+    let injuries = [];
 
-    const { data } = await axios.get(url, { timeout: 8000 });
+    for (const team of TEAMS) {
+      const url = `https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams/${team}/injuries`;
 
-    const injuredList = data.items || [];
-    const injuries = [];
-
-    // ESPN links each injured player via /athletes/{id}
-    for (const item of injuredList) {
       try {
-        const { data: athlete } = await axios.get(item.$ref, { timeout: 8000 });
+        const { data } = await axios.get(url, { timeout: 8000 });
 
-        injuries.push({
-          player: athlete?.fullName || athlete?.displayName || null,
+        const items = data?.injuries || [];
 
-          team: athlete?.team?.abbreviation || null,
-          teamName: athlete?.team?.displayName || null,
-
-          position: athlete?.position?.abbreviation || null,
-
-          injury: athlete?.injuries?.[0]?.detail || null,
-          status: athlete?.injuries?.[0]?.status || null,
-          date: athlete?.injuries?.[0]?.date || null
-        });
+        for (const inj of items) {
+          injuries.push({
+            player: inj?.athlete?.displayName || null,
+            team: inj?.team?.abbreviation || team.toUpperCase(),
+            teamName: inj?.team?.displayName || null,
+            position: inj?.athlete?.position?.abbreviation || null,
+            injury: inj?.details?.[0]?.shortComment || inj?.status || null,
+            status: inj?.details?.[0]?.type || null,
+            date: inj?.details?.[0]?.date || null
+          });
+        }
       } catch (err) {
-        console.warn("Error parsing athlete:", err.message);
+        console.warn(`ESPN team failed: ${team}`, err.message);
       }
     }
 
