@@ -1,0 +1,14 @@
+{
+  "name": "prop-pick-data",
+  "version": "1.0.0",
+  "description": "CBS Sports Injury Scraper for NBA/NFL",
+  "main": "index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "axios": "^1.6.2",
+    "cheerio": "^1.0.0-rc.12"
+  }
+}
