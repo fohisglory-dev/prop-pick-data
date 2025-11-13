@@ -1,10 +1,10 @@
 // api/_scrapeCBS.js
-// SAFE + UPDATED CBS HYBRID SCRAPER (won’t crash when CBS structure changes)
+// Updated CBS scraper using new React table markup
 
 const axios = require("axios");
 const cheerio = require("cheerio");
 
-// Team name → abbreviation map
+// TEAM NAMES → ABBR
 const TEAM_ABBR = {
   "Atlanta Hawks": "ATL",
   "Boston Celtics": "BOS",
@@ -38,81 +38,46 @@ const TEAM_ABBR = {
   "Washington Wizards": "WAS"
 };
 
-// Safe getter
-const safe = (arr, i, $) => {
-  if (!arr[i]) return null;
-  return $(arr[i]).text().trim();
-};
 
-// SCRAPE TEAM DETAIL PAGE FOR NOTES
-async function scrapeTeamDetail(url) {
+// SCRAPE LEAGUE PAGE
+async function scrapeLeague(league) {
   try {
-    const { data } = await axios.get(url, { timeout: 8000 });
+    const url = `https://www.cbssports.com/${league}/injuries/`;
+    const { data } = await axios.get(url, { timeout: 10000 });
     const $ = cheerio.load(data);
 
-    let injuries = [];
+    let results = [];
 
-    $(".TableBase-body tr").each((_, row) => {
-      const tds = $(row).find("td");
-      if (tds.length < 3) return;
+    // NEW CBS STRUCTURE:
+    // rows = ".TableBase-tableRow"
+    $(".TableBase-tableRow").each((_, row) => {
+      const tds = $(row).find(".TableBase-bodyTd");
+      if (tds.length < 5) return;
 
-      injuries.push({
-        player: safe(tds, 0, $),
-        position: safe(tds, 1, $),
-        injury: safe(tds, 2, $),
-        status: safe(tds, 3, $),
-        notes: safe(tds, 4, $)
+      const teamName = $(tds[0]).text().trim();
+      const player = $(tds[1]).text().trim();
+      const position = $(tds[2]).text().trim();
+      const injury = $(tds[3]).text().trim();
+      const status = $(tds[4]).text().trim();
+      const updated = $(tds[5]).text().trim();
+
+      results.push({
+        team: TEAM_ABBR[teamName] || null,
+        teamName,
+        player,
+        position,
+        injury,
+        status,
+        updated,
+        notes: null
       });
     });
 
-    return injuries;
-  } catch {
+    return results;
+  } catch (err) {
+    console.error("CBS SCRAPE FAILED:", err);
     return [];
   }
-}
-
-// MAIN CBS SCRAPER
-async function scrapeLeague(league) {
-  const url = `https://www.cbssports.com/${league}/injuries/`;
-
-  const { data } = await axios.get(url, { timeout: 8000 });
-  const $ = cheerio.load(data);
-
-  let results = [];
-
-  $(".TableBase-body tr").each((_, row) => {
-    const tds = $(row).find("td");
-    if (tds.length < 3) return; // ignore garbage rows
-
-    const teamName = safe(tds, 0, $);
-    const team = TEAM_ABBR[teamName] || null;
-
-    results.push({
-      team,
-      teamName,
-      player: safe(tds, 1, $),
-      position: safe(tds, 2, $),
-      injury: safe(tds, 3, $),
-      status: safe(tds, 4, $),
-      updated: safe(tds, 5, $),
-      notes: null,
-      detailUrl: tds[1] ? $(tds[1]).find("a").attr("href") || null : null
-    });
-  });
-
-  // HYBRID: get deeper notes on Q/O/D players
-  for (let r of results) {
-    if (!["Out", "Questionable", "Doubtful"].includes(r.status)) continue;
-    if (!r.team) continue;
-
-    const teamUrl = `https://www.cbssports.com/${league}/teams/${r.team.toLowerCase()}/x/injuries/`;
-    const deep = await scrapeTeamDetail(teamUrl);
-
-    const match = deep.find((d) => d.player === r.player);
-    if (match?.notes) r.notes = match.notes;
-  }
-
-  return results;
 }
 
 module.exports = { scrapeLeague };
