@@ -12,13 +12,9 @@ const client = axios.create({
   headers: { "User-Agent": "Mozilla/5.0" }
 });
 
-// Convert ESPN values to numbers without treating missing values as zero.
 function toNumber(value) {
-  if (value === null || value === undefined || value === "") {
-    return null;
-  }
+  if (value === null || value === undefined || value === "") return null;
 
-  // Handle minutes formatted as MM:SS.
   if (typeof value === "string" && /^\d+:\d{1,2}$/.test(value)) {
     const [minutes, seconds] = value.split(":").map(Number);
     return minutes + seconds / 60;
@@ -36,17 +32,13 @@ function round(value, decimals = 2) {
 
 function average(values) {
   const valid = values.filter(Number.isFinite);
-
   if (!valid.length) return null;
 
-  return round(
-    valid.reduce((sum, value) => sum + value, 0) / valid.length
-  );
+  return round(valid.reduce((sum, value) => sum + value, 0) / valid.length);
 }
 
 function standardDeviation(values) {
   const valid = values.filter(Number.isFinite);
-
   if (!valid.length) return null;
 
   const mean = average(valid);
@@ -60,9 +52,7 @@ function standardDeviation(values) {
 function getAttemptedValue(value) {
   if (value === null || value === undefined) return null;
 
-  // ESPN commonly formats these as "made-attempted".
   const match = String(value).match(/^\s*\d+\s*-\s*(\d+)\s*$/);
-
   return match ? Number(match[1]) : null;
 }
 
@@ -70,36 +60,27 @@ function getGameStat(game, stat) {
   switch (stat) {
     case "points":
       return toNumber(game.points);
-
     case "rebounds":
       return toNumber(game.rebounds);
-
     case "assists":
       return toNumber(game.assists);
-
     case "steals":
       return toNumber(game.stats?.steals);
-
     case "blocks":
       return toNumber(game.stats?.blocks);
-
     case "turnovers":
       return toNumber(game.stats?.turnovers);
-
     case "pra": {
       const points = toNumber(game.points);
       const rebounds = toNumber(game.rebounds);
       const assists = toNumber(game.assists);
 
-      if (
-        points === null ||
-        rebounds === null ||
-        assists === null
-      ) return null;
+      if (points === null || rebounds === null || assists === null) {
+        return null;
+      }
 
       return points + rebounds + assists;
     }
-
     default:
       return null;
   }
@@ -112,10 +93,7 @@ function analyzeProp(games, stat, line, direction) {
     const sample = games.slice(0, period);
 
     const outcomes = sample
-      .map(game => ({
-        game,
-        value: getGameStat(game, stat)
-      }))
+      .map(game => ({ game, value: getGameStat(game, stat) }))
       .filter(item => item.value !== null);
 
     const values = outcomes.map(item => item.value);
@@ -128,11 +106,7 @@ function analyzeProp(games, stat, line, direction) {
     for (const value of values) {
       if (value === line) {
         pushes++;
-      } else if (
-        direction === "over"
-          ? value > line
-          : value < line
-      ) {
+      } else if (direction === "over" ? value > line : value < line) {
         wins++;
       } else {
         losses++;
@@ -149,9 +123,7 @@ function analyzeProp(games, stat, line, direction) {
       wins,
       losses,
       pushes,
-      hitRate: decided
-        ? round((wins / decided) * 100, 1)
-        : null,
+      hitRate: decided ? round((wins / decided) * 100, 1) : null,
       average: average(values),
       averageMargin: average(margins),
       standardDeviation: standardDeviation(values),
@@ -174,7 +146,39 @@ function analyzeProp(games, stat, line, direction) {
   };
 }
 
-async function getGameDetails(eventId, playerTeam) {
+// Find the player's team by locating the ESPN athlete ID in the box score.
+function findPlayerTeam(data, athleteId) {
+  const playerSections = data.boxscore?.players || [];
+
+  for (const section of playerSections) {
+    const teamCode =
+      section.team?.abbreviation ||
+      section.team?.shortDisplayName ||
+      null;
+
+    const statistics = section.statistics || [];
+
+    for (const statGroup of statistics) {
+      const athletes = statGroup.athletes || [];
+
+      for (const athlete of athletes) {
+        const id = String(
+          athlete.athlete?.id ||
+          athlete.id ||
+          ""
+        );
+
+        if (id === String(athleteId)) {
+          return teamCode;
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
+async function getGameDetails(eventId, athleteId) {
   try {
     const { data } = await client.get(SUMMARY_URL, {
       params: { event: eventId }
@@ -184,14 +188,15 @@ async function getGameDetails(eventId, playerTeam) {
 
     const teamCodes = teams.map(item =>
       item.team?.abbreviation || item.abbreviation || null
-    );
+    ).filter(Boolean);
 
-    const opponent = teams.find(item => {
-      const code = item.team?.abbreviation || item.abbreviation;
-      return code &&
-        (!playerTeam ||
-          code.toUpperCase() !== playerTeam.toUpperCase());
-    });
+    const playerTeam = findPlayerTeam(data, athleteId);
+
+    const opponent = playerTeam
+      ? teamCodes.find(code =>
+          code.toUpperCase() !== playerTeam.toUpperCase()
+        ) || null
+      : null;
 
     return {
       date:
@@ -200,16 +205,17 @@ async function getGameDetails(eventId, playerTeam) {
         data.gameInfo?.date ||
         null,
       teams: teamCodes,
-      opponent:
-        opponent?.team?.abbreviation ||
-        opponent?.abbreviation ||
-        null
+      playerTeam,
+      opponent,
+      playerTeamVerified: Boolean(playerTeam && opponent)
     };
   } catch (err) {
     return {
       date: null,
       teams: [],
+      playerTeam: null,
       opponent: null,
+      playerTeamVerified: false,
       detail: String(err.message || err)
     };
   }
@@ -308,13 +314,10 @@ module.exports = async (req, res) => {
 
         const getStat = name => {
           const index = labels.indexOf(name);
-          return index >= 0
-            ? event.stats?.[index] ?? null
-            : null;
+          return index >= 0 ? event.stats?.[index] ?? null : null;
         };
 
         const pointsValue = toNumber(getStat("points"));
-
         if (pointsValue === null) continue;
 
         games.push({
@@ -322,6 +325,7 @@ module.exports = async (req, res) => {
           date: event.gameDate || null,
           opponent: event.opponent || null,
           playerTeam,
+          playerTeamVerified: false,
           points: pointsValue,
           minutes: getStat("minutes"),
           rebounds: getStat("totalRebounds"),
@@ -337,23 +341,29 @@ module.exports = async (req, res) => {
       }
     }
 
-    // Enrich missing game dates and opponents.
+    // Enrich game dates and verify player team/opponent from ESPN box scores.
     const gamesToEnrich = games.slice(0, 30);
 
     for (let i = 0; i < gamesToEnrich.length; i += 5) {
       const batch = gamesToEnrich.slice(i, i + 5);
 
       const details = await Promise.all(
-        batch.map(game =>
-          getGameDetails(game.eventId, game.playerTeam)
-        )
+        batch.map(game => getGameDetails(game.eventId, athleteId))
       );
 
       batch.forEach((game, index) => {
         const detail = details[index];
 
         if (!game.date) game.date = detail.date;
-        if (!game.opponent) game.opponent = detail.opponent;
+
+        if (detail.playerTeam) {
+          game.playerTeam = detail.playerTeam;
+          game.playerTeamVerified = detail.playerTeamVerified;
+        }
+
+        if (detail.opponent) {
+          game.opponent = detail.opponent;
+        }
 
         game.teams = detail.teams;
       });
@@ -361,24 +371,12 @@ module.exports = async (req, res) => {
 
     const summarize = items => ({
       count: items.length,
-      pointsAverage: average(
-        items.map(game => toNumber(game.points))
-      ),
-      minutesAverage: average(
-        items.map(game => toNumber(game.minutes))
-      ),
-      reboundsAverage: average(
-        items.map(game => toNumber(game.rebounds))
-      ),
-      assistsAverage: average(
-        items.map(game => toNumber(game.assists))
-      ),
-      fgaAverage: average(
-        items.map(game => game.fga)
-      ),
-      ftaAverage: average(
-        items.map(game => game.fta)
-      ),
+      pointsAverage: average(items.map(game => toNumber(game.points))),
+      minutesAverage: average(items.map(game => toNumber(game.minutes))),
+      reboundsAverage: average(items.map(game => toNumber(game.rebounds))),
+      assistsAverage: average(items.map(game => toNumber(game.assists))),
+      fgaAverage: average(items.map(game => game.fga)),
+      ftaAverage: average(items.map(game => game.fta)),
       games: items
     });
 
@@ -394,7 +392,9 @@ module.exports = async (req, res) => {
       gameCount: games.length,
       gameDetailsStatus: {
         datesAvailable: games.filter(g => g.date).length,
-        opponentsAvailable: games.filter(g => g.opponent).length
+        opponentsAvailable: games.filter(g => g.opponent).length,
+        playerTeamsVerified: games.filter(g => g.playerTeamVerified).length,
+        totalGamesChecked: gamesToEnrich.length
       },
       last5: summarize(last5),
       last10: summarize(last10),
@@ -411,7 +411,6 @@ module.exports = async (req, res) => {
     }
 
     return res.status(200).json(response);
-
   } catch (err) {
     return res.status(500).json({
       error: "ESPN player game log failed",
