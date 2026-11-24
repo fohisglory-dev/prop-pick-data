@@ -1,10 +1,10 @@
+
 // api/_espnRoster.js
-// Shared ESPN NBA roster scraper logic
+// Shared ESPN NBA roster scraper with player IDs
 
 const axios = require("axios");
 const cheerio = require("cheerio");
 
-// ESPN uses these team abbreviations in the URL
 const ESPN_TEAM_MAP = {
   ATL: "atlanta-hawks",
   BOS: "boston-celtics",
@@ -38,10 +38,6 @@ const ESPN_TEAM_MAP = {
   WAS: "washington-wizards"
 };
 
-/**
- * Fetch a single NBA team’s roster from ESPN
- * @param {string} teamCode - 3-letter code, e.g. "LAL"
- */
 async function fetchNBATeamRoster(teamCode) {
   const team = (teamCode || "").toUpperCase();
   const slug = ESPN_TEAM_MAP[team];
@@ -52,17 +48,25 @@ async function fetchNBATeamRoster(teamCode) {
 
   const url = `https://www.espn.com/nba/team/roster/_/name/${team.toLowerCase()}/${slug}`;
 
-  const { data } = await axios.get(url, { timeout: 10000 });
-  const $ = cheerio.load(data);
+  const { data } = await axios.get(url, {
+    timeout: 15000,
+    headers: {
+      "User-Agent": "Mozilla/5.0"
+    }
+  });
 
+  const $ = cheerio.load(data);
   const players = [];
 
-  // ESPN roster table: number | name | pos | age | height | weight
   $("table tbody tr").each((_, row) => {
     const cols = $(row).find("td");
     if (cols.length < 6) return;
 
+    const playerLink = $(cols[1]).find("a").attr("href") || "";
+    const idMatch = playerLink.match(/\/id\/(\d+)/i);
+
     players.push({
+      espnId: idMatch ? idMatch[1] : null,
       number: $(cols[0]).text().trim(),
       name: $(cols[1]).text().trim(),
       position: $(cols[2]).text().trim(),
