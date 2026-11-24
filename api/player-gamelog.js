@@ -12,24 +12,51 @@ const client = axios.create({
   headers: { "User-Agent": "Mozilla/5.0" }
 });
 
-async function getGameDetails(eventId, playerTeam) {
+function getTeamCode(item) {
+  return (
+    item?.team?.abbreviation ||
+    item?.abbreviation ||
+    null
+  );
+}
+
+function containsPlayer(teamEntry, athleteId) {
+  const statistics = teamEntry?.statistics || [];
+
+  return statistics.some(stat =>
+    (stat.athletes || []).some(row => {
+      const id =
+        row?.athlete?.id ||
+        row?.athlete?.uid?.split(":").pop() ||
+        row?.id;
+
+      return String(id || "") === String(athleteId);
+    })
+  );
+}
+
+async function getGameDetails(eventId, athleteId) {
   try {
     const { data } = await client.get(SUMMARY_URL, {
       params: { event: eventId }
     });
 
     const teams = data.boxscore?.teams || [];
+    const playerEntries = data.boxscore?.players || [];
 
-    const teamCodes = teams.map(item =>
-      item.team?.abbreviation || item.abbreviation || null
+    const playerEntry = playerEntries.find(entry =>
+      containsPlayer(entry, athleteId)
     );
 
-    const opponent = teams.find(item => {
-      const code = item.team?.abbreviation || item.abbreviation;
-      return code &&
-        (!playerTeam ||
-          code.toUpperCase() !== playerTeam.toUpperCase());
-    });
+    const playerTeam = getTeamCode(playerEntry);
+
+    const opponentEntry = playerEntry
+      ? teams.find(entry =>
+          getTeamCode(entry) &&
+          getTeamCode(entry).toUpperCase() !==
+            playerTeam?.toUpperCase()
+        )
+      : null;
 
     return {
       date:
@@ -37,17 +64,19 @@ async function getGameDetails(eventId, playerTeam) {
         data.header?.gameDate ||
         data.gameInfo?.date ||
         null,
-      teams: teamCodes,
-      opponent:
-        opponent?.team?.abbreviation ||
-        opponent?.abbreviation ||
-        null
+      playerTeam,
+      opponent: getTeamCode(opponentEntry),
+      teams: teams.map(getTeamCode).filter(Boolean),
+      playerTeamVerified: Boolean(playerTeam)
     };
+
   } catch (err) {
     return {
       date: null,
-      teams: [],
+      playerTeam: null,
       opponent: null,
+      teams: [],
+      playerTeamVerified: false,
       detail: String(err.message || err)
     };
   }
@@ -78,11 +107,6 @@ module.exports = async (req, res) => {
       .flatMap(type => type.categories || []);
 
     for (const category of categories) {
-      const playerTeam =
-        category.displayTeam ||
-        category.team?.abbreviation ||
-        null;
-
       for (const event of category.events || []) {
         if (!event.eventId || seen.has(event.eventId)) continue;
         seen.add(event.eventId);
@@ -111,7 +135,8 @@ module.exports = async (req, res) => {
           eventId: event.eventId,
           date: event.gameDate || null,
           opponent: event.opponent || null,
-          playerTeam,
+          playerTeam: null,
+          playerTeamVerified: false,
           points: Number(pointsValue),
           minutes: getStat("minutes"),
           rebounds: getStat("totalRebounds"),
@@ -121,7 +146,7 @@ module.exports = async (req, res) => {
       }
     }
 
-    // Enrich missing game dates and opponents.
+    // Enrich the most recent 30 games in batches of five.
     const gamesToEnrich = games.slice(0, 30);
 
     for (let i = 0; i < gamesToEnrich.length; i += 5) {
@@ -129,7 +154,7 @@ module.exports = async (req, res) => {
 
       const details = await Promise.all(
         batch.map(game =>
-          getGameDetails(game.eventId, game.playerTeam)
+          getGameDetails(game.eventId, athleteId)
         )
       );
 
@@ -138,7 +163,12 @@ module.exports = async (req, res) => {
 
         if (!game.date) game.date = detail.date;
 
-        if (!game.opponent) {
+        if (detail.playerTeam) {
+          game.playerTeam = detail.playerTeam;
+          game.playerTeamVerified = true;
+        }
+
+        if (detail.opponent) {
           game.opponent = detail.opponent;
         }
 
@@ -180,10 +210,15 @@ module.exports = async (req, res) => {
       labels,
       displayNames,
       gameCount: games.length,
+
       gameDetailsStatus: {
         datesAvailable: games.filter(g => g.date).length,
-        opponentsAvailable: games.filter(g => g.opponent).length
+        opponentsAvailable: games.filter(g => g.opponent).length,
+        playerTeamsVerified: games.filter(
+          g => g.playerTeamVerified
+        ).length
       },
+
       last5: summarize(last5),
       last10: summarize(last10),
       games
