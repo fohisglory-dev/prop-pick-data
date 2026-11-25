@@ -13,7 +13,7 @@ function firstValue(...values) {
 
 function asText(value) {
   if (value && typeof value === "object") {
-    return firstValue(value.abbreviation, value.name, value.display_name, value.displayName, null);
+    return firstValue(value.abbreviation, value.abbr, value.name, value.display_name, value.displayName, value.full_name, value.fullName, null);
   }
   return value === null || value === undefined ? null : String(value);
 }
@@ -21,24 +21,45 @@ function asText(value) {
 function projectionKey(item) {
   const id = firstValue(item?.id, item?.source_projection_id, null);
   if (id) return "id:" + String(id);
-  const player = firstValue(item?.player?.id, item?.player?.name, "unknown-player");
-  const event = firstValue(item?.event?.id, item?.event?.starts_at, "unknown-event");
-  const market = firstValue(item?.market?.id, item?.market?.stat, "unknown-market");
+  const player = firstValue(item?.player?.id, item?.player?.name, asText(item?.player), item?.player_id, "unknown-player");
+  const event = firstValue(item?.event?.id, item?.event?.starts_at, item?.event?.name, "unknown-event");
+  const market = firstValue(item?.market?.id, item?.market?.stat, asText(item?.market), "unknown-market");
   const line = item?.line ?? "unknown-line";
   const tier = item?.source_fields?.odds_type || item?.pricing?.odds_type || "unknown-tier";
   return ["composite", player, event, market, line, tier].join("|");
 }
 
 function playerName(item) {
-  return asText(firstValue(item?.player?.name, item?.player?.display_name, item?.player_name, item?.name, null));
+  const player = item?.player;
+  return asText(firstValue(
+    player?.name,
+    player?.display_name,
+    player?.displayName,
+    player?.full_name,
+    player?.fullName,
+    player?.label,
+    item?.player_name,
+    item?.playerName,
+    item?.athlete?.name,
+    item?.name,
+    asText(player),
+    null
+  ));
 }
 
 function playerId(item) {
-  return asText(firstValue(item?.player?.id, item?.player_id, null));
+  return asText(firstValue(item?.player?.id, item?.player_id, item?.athlete?.id, null));
 }
 
 function team(item) {
-  return asText(firstValue(item?.player?.team, item?.player?.team_abbreviation, item?.team, null));
+  return asText(firstValue(
+    item?.player?.team,
+    item?.player?.team_abbreviation,
+    item?.player?.teamAbbreviation,
+    item?.team,
+    item?.team_abbreviation,
+    null
+  ));
 }
 
 function opponent(item) {
@@ -57,6 +78,22 @@ function matchup(item) {
   return asText(firstValue(item?.event?.name, item?.event?.description, item?.matchup, null));
 }
 
+function marketName(item) {
+  const market = item?.market;
+  return asText(firstValue(
+    market?.stat,
+    market?.name,
+    market?.display_name,
+    market?.displayName,
+    item?.source_fields?.stat_type,
+    item?.source_fields?.stat_short,
+    item?.stat_type,
+    item?.stat,
+    asText(market),
+    null
+  ));
+}
+
 function tier(item) {
   return String(firstValue(
     item?.source_fields?.odds_type,
@@ -71,8 +108,31 @@ function isStandard(item) {
   return ["standard", "standard_line", "normal"].includes(tier(item));
 }
 
-function uniqueSorted(values) {
-  return [...new Set(values.filter(v => v !== null && v !== undefined && String(v).trim() !== "").map(String))].sort();
+function availableSides(item) {
+  if (Array.isArray(item?.selections)) {
+    const sides = item.selections
+      .filter(selection => selection?.available !== false)
+      .map(selection => {
+        const side = String(selection?.side || "").toLowerCase();
+        if (side === "over" || side === "more") return "more";
+        if (side === "under" || side === "less") return "less";
+        return null;
+      })
+      .filter(Boolean);
+    if (sides.length) return [...new Set(sides)];
+  }
+
+  const allowed = String(firstValue(
+    item?.source_fields?.allowed_wager_types,
+    item?.allowed_wager_types,
+    item?.market?.allowed_wager_types,
+    ""
+  )).toLowerCase().replace(/[^a-z]/g, "");
+
+  const sides = [];
+  if (allowed.includes("over") || allowed.includes("more")) sides.push("more");
+  if (allowed.includes("under") || allowed.includes("less")) sides.push("less");
+  return sides;
 }
 
 function makeCompactPayload(items) {
@@ -105,26 +165,25 @@ function makeCompactPayload(items) {
       ];
     }
 
-    const selections = Array.isArray(item?.selections) ? item.selections : [];
-    const sides = selections
-      .filter(selection => selection?.available !== false)
-      .map(selection => String(selection?.side || "").toLowerCase())
-      .filter(Boolean);
-
     rows.push([
       asText(firstValue(item?.id, item?.source_projection_id, null)),
       pKey,
       eKey,
-      asText(firstValue(item?.market?.stat, item?.market?.name, item?.stat_type, item?.stat, null)),
+      marketName(item),
       item?.line ?? null,
       tier(item) || null,
-      uniqueSorted(sides),
+      availableSides(item),
       asText(firstValue(item?.status, item?.source_fields?.source_status, null)),
       Boolean(item?.source_fields?.is_live || item?.source_fields?.in_game || item?.is_live || item?.in_game)
     ]);
   }
 
-  return { columns: ["projectionId", "playerKey", "eventKey", "market", "line", "tier", "availableSides", "status", "live"], players, events, rows };
+  return {
+    columns: ["projectionId", "playerKey", "eventKey", "market", "line", "tier", "availableSides", "status", "live"],
+    players,
+    events,
+    rows
+  };
 }
 
 module.exports = async (req, res) => {
@@ -157,6 +216,11 @@ module.exports = async (req, res) => {
   const limit = Number(req.query.limit ?? PAGE_LIMIT);
   if (!Number.isInteger(limit) || limit < 1 || limit > PAGE_LIMIT) {
     return res.status(400).json({ success: false, error: "limit must be an integer from 1 to " + PAGE_LIMIT });
+  }
+
+  const debugSamples = Number(req.query.debugSamples ?? 0);
+  if (!Number.isInteger(debugSamples) || debugSamples < 0 || debugSamples > 3) {
+    return res.status(400).json({ success: false, error: "debugSamples must be an integer from 0 to 3" });
   }
 
   const startedMs = Date.now();
@@ -254,7 +318,6 @@ module.exports = async (req, res) => {
 
       seenCursors.add(nextCursor);
       cursor = nextCursor;
-
       if (page === maxPages) stopReason = "max_pages_reached";
     }
 
@@ -270,7 +333,7 @@ module.exports = async (req, res) => {
       const name = playerName(item);
       const id = playerId(item);
       const game = matchup(item);
-      const stat = asText(firstValue(item?.market?.stat, item?.market?.name, item?.stat_type, item?.stat, null));
+      const stat = marketName(item);
 
       if (name) playerNames.add(name);
       if (id) playerIds.add(id);
@@ -278,7 +341,15 @@ module.exports = async (req, res) => {
       if (stat) markets.add(stat);
 
       if (game) {
-        if (!gameCoverage[game]) gameCoverage[game] = { matchup: game, projections: 0, standardProjections: 0, uniquePlayers: 0, _players: new Set() };
+        if (!gameCoverage[game]) {
+          gameCoverage[game] = {
+            matchup: game,
+            projections: 0,
+            standardProjections: 0,
+            uniquePlayers: 0,
+            _players: new Set()
+          };
+        }
         gameCoverage[game].projections++;
         if (isStandard(item)) gameCoverage[game].standardProjections++;
         if (name) gameCoverage[game]._players.add(name);
@@ -290,19 +361,20 @@ module.exports = async (req, res) => {
       delete entry._players;
     }
 
-    // The Action response limit is 100,000 characters. Send compact tuples and
-    // enforce a safety ceiling; never imply omitted rows were screened.
     let compact = makeCompactPayload(standard);
     let projectionPayloadTruncated = false;
     let includedStandardProjections = standard.length;
 
     while (includedStandardProjections > 0) {
-      const candidate = JSON.stringify(compact);
-      if (candidate.length <= RESPONSE_BUDGET_CHARS) break;
+      if (JSON.stringify(compact).length <= RESPONSE_BUDGET_CHARS) break;
       includedStandardProjections = Math.floor(includedStandardProjections * 0.9);
       compact = makeCompactPayload(standard.slice(0, includedStandardProjections));
       projectionPayloadTruncated = true;
     }
+
+    const debugProjectionSamples = debugSamples
+      ? allUnique.slice(0, debugSamples)
+      : undefined;
 
     const payloadChars = JSON.stringify(compact).length;
     const complete = stopReason === "pagination_complete" && !cursor && !providerError;
@@ -320,7 +392,7 @@ module.exports = async (req, res) => {
       status,
       complete,
       stopReason,
-      request: { maxPages, pageLimit: limit, initialCursor },
+      request: { maxPages, pageLimit: limit, initialCursor, debugSamples },
       pagination: {
         pagesRequested: pageAudit.length,
         recordsRetrieved,
@@ -336,6 +408,9 @@ module.exports = async (req, res) => {
         uniqueMarkets: markets.size,
         standardProjections: standard.length,
         standardProjectionsReturned: includedStandardProjections,
+        playersMissingNames: [...playerIds].filter(id =>
+          !allUnique.some(item => playerId(item) === id && playerName(item))
+        ).length,
         nonStandardProjections: allUnique.length - standard.length,
         matchups: Object.values(gameCoverage).sort((a, b) => a.matchup.localeCompare(b.matchup))
       },
@@ -343,6 +418,7 @@ module.exports = async (req, res) => {
       players: compact.players,
       events: compact.events,
       projections: compact.rows,
+      debugProjectionSamples,
       payload: {
         characters: payloadChars,
         truncated: projectionPayloadTruncated,
